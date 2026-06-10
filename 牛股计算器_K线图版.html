@@ -183,11 +183,11 @@
                                 </ul>
                                 <h4 style="margin: 0 0 8px 0; color: #E6A23C;">📈 二、增强波段默认值</h4>
                                 <ul style="padding-left: 18px; margin: 0 0 15px 0;">
-                                    <li><b>默认窗口</b>：最近30个交易日。</li>
-                                    <li><b>阶段底部</b>：用MACD金叉划段，取金叉所终结下跌段的最低点。</li>
-                                    <li><b>阶段顶部</b>：用MACD死叉划段，取死叉所终结上涨段的最高点。</li>
-                                    <li><b>兜底</b>：交叉缺失时退回近30日高低点，且不覆盖手动/导入值。</li>
-                                    <li><b>重算按钮</b>：手填错误时可一键按上述逻辑重算顶/底。</li>
+                                    <li><b>波段划分</b>：在近180日K线上按MACD金叉/死叉划分波段结构，不受日历窗口截断。</li>
+                                    <li><b>阶段底部</b>：金叉所终结下跌段的最低点；<b>阶段顶部</b>：死叉所终结上涨段的最高点。</li>
+                                    <li><b>尾段跟踪</b>：最后一次交叉后的进行中行情双向跟踪新极值；盘中未收盘K线不参与交叉确认，但盘中触及价计入极值。</li>
+                                    <li><b>兜底</b>：完全无交叉时退回近30日高低点，且不覆盖手动/导入值。</li>
+                                    <li><b>重算按钮</b>：手填错误或出现「除权?」提示时，一键按上述逻辑重算顶/底。</li>
                                 </ul>
                                 <h4 style="margin: 0 0 8px 0; color: #67C23A;">🛡️ 二、 持仓模式</h4>
                                 <ul style="padding-left: 18px; margin: 0 0 15px 0;">
@@ -247,6 +247,7 @@
                                     <div style="font-size: 11px; color: #909399;">{{scope.row.fullCode}}</div>
                                 </div>
                                 <span v-if="scope.row.isBreakLow" class="warning-tag">破位</span>
+                                <span v-if="scope.row.exRights" class="warning-tag" style="background:#e6a23c; animation:none;" title="检测到K线价格基准变化（疑似除权除息），已存顶底已失真，建议点击重算">除权?</span>
                             </div>
                         </template>
                     </el-table-column>
@@ -348,6 +349,7 @@
                             <span class="stock-name-link" @click="showChart(item)">{{item.name}} 📈</span>
                             <span class="m-code">{{item.fullCode}}</span>
                             <span v-if="item.isBreakLow" class="warning-tag">破位</span>
+                            <span v-if="item.exRights" class="warning-tag" style="background:#e6a23c; animation:none;">除权?</span>
                         </div>
                         <div style="flex-shrink: 0;">
                             <el-button type="primary" size="small" link @click="recalcSwing(item)">重算顶底</el-button>
@@ -450,12 +452,11 @@
                 macd: (diff[index] - dea[index]) * 2
             }));
         };
-        const findMacdSwingDefaultsFromSeries = (klines, macdSeries, windowSize = 30) => {
+        const findMacdSwingDefaultsFromSeries = (klines, macdSeries, windowSize = 30, options = {}) => {
             if (!klines.length) return { high: 0, low: 0, highSource: 'none', lowSource: 'none' };
             const recent = klines.slice(-windowSize);
             const fallbackHigh = Math.max(...recent.map(item => toNumber(item.high)));
             const fallbackLow = Math.min(...recent.map(item => toNumber(item.low)).filter(value => value > 0));
-            const start = Math.max(1, klines.length - windowSize);
             const segmentHigh = (from, to) => {
                 let v = 0;
                 for (let j = Math.max(from, 0); j <= to; j++) v = Math.max(v, toNumber(klines[j].high));
@@ -474,23 +475,28 @@
             let highSource = 'range';
             let lowSource = 'range';
             // MACD交叉是滞后确认信号，"交叉前一日"经常抓到反弹次高/二次探底而非真实极值，
-            // 因此用交叉划分波段后，取整段行情内的极值作为阶段顶/底
+            // 因此用交叉划分波段后，取整段行情内的极值作为阶段顶/底。
+            // 交叉扫描覆盖全部已拉取历史（波段是结构概念，不被日历窗口截断），
+            // windowSize 仅决定无交叉时的兜底极值范围
             let lastGoldenIdx = -1;
             let lastDeathIdx = -1;
-            for (let i = start; i < macdSeries.length; i++) {
+            // 盘中最后一根K线未收盘，其上的交叉未经收盘确认可能闪烁，不参与交叉判定；
+            // 但其盘中触及的高低价仍计入尾段极值
+            const crossEnd = options.lastBarIncomplete ? macdSeries.length - 1 : macdSeries.length;
+            for (let i = 1; i < crossEnd; i++) {
                 const prev = macdSeries[i - 1];
                 const curr = macdSeries[i];
                 if (!prev || !curr || !klines[i - 1]) continue;
                 if (prev.diff <= prev.dea && curr.diff > curr.dea) {
-                    // 金叉：取上一次死叉（或窗口起点）以来这段下跌的最低点
-                    const from = lastDeathIdx > -1 ? lastDeathIdx - 1 : start - 1;
+                    // 金叉：取上一次死叉（或数据起点）以来这段下跌的最低点
+                    const from = lastDeathIdx > -1 ? lastDeathIdx - 1 : 0;
                     low = segmentLow(from, i - 1);
                     lowSource = 'down-leg-low';
                     lastGoldenIdx = i;
                 }
                 if (prev.diff >= prev.dea && curr.diff < curr.dea) {
-                    // 死叉：取上一次金叉（或窗口起点）以来这段上涨的最高点
-                    const from = lastGoldenIdx > -1 ? lastGoldenIdx - 1 : start - 1;
+                    // 死叉：取上一次金叉（或数据起点）以来这段上涨的最高点
+                    const from = lastGoldenIdx > -1 ? lastGoldenIdx - 1 : 0;
                     high = segmentHigh(from, i - 1);
                     highSource = 'up-leg-high';
                     lastDeathIdx = i;
@@ -522,8 +528,8 @@
                 lowSource
             };
         };
-        const findMacdSwingDefaults = (klines, windowSize = 30) => {
-            return findMacdSwingDefaultsFromSeries(klines, calcMACD(klines), windowSize);
+        const findMacdSwingDefaults = (klines, windowSize = 30, options = {}) => {
+            return findMacdSwingDefaultsFromSeries(klines, calcMACD(klines), windowSize, options);
         };
         const classifyShadow = (kline) => {
             const open = toNumber(kline.open);
@@ -784,8 +790,9 @@
                         script.remove();
                         try { delete window[varName]; } catch (e) { window[varName] = undefined; }
                     };
+                    // 网络失败/超时不写缓存，下次刷新自动重试；
+                    // 接口正常返回但数据为空（无效代码）才缓存，避免反复请求
                     const fail = () => {
-                        klineCache.set(code, []);
                         cleanup();
                         resolve([]);
                     };
@@ -797,14 +804,39 @@
                         cleanup();
                         resolve(klines);
                     };
-                    script.src = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${code},day,,,90,qfq`;
+                    script.src = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${code},day,,,180,qfq`;
                     document.body.appendChild(script);
                 });
             };
+            // 最后一根K线是否为盘中未收盘的半根（其上的MACD交叉未经收盘确认）
+            const isLastBarIncomplete = (row, klines) => {
+                if (!klines.length) return false;
+                const todayDate = row.quoteDate || getTodayDate();
+                return klines[klines.length - 1].date === todayDate && isTradingTime();
+            };
+            // 记录顶底锚点的前复权基准（最后一根完整K线的日期+收盘价），用于除权检测
+            const stampAnchorBase = (row, klines) => {
+                if (!klines.length) return;
+                let bar = klines[klines.length - 1];
+                if (isLastBarIncomplete(row, klines) && klines.length > 1) bar = klines[klines.length - 2];
+                row.anchorBaseDate = bar.date;
+                row.anchorBaseClose = bar.close;
+                row.exRights = false;
+            };
+            // 前复权基准变化检测：同一历史交易日的收盘价在新数据里变了 → 发生过除权除息，
+            // 已存顶底全部失真，提示用户重算
+            const checkExRights = (row, klines) => {
+                if (!row.anchorBaseDate || !(row.anchorBaseClose > 0)) return;
+                const bar = klines.find(k => k.date === row.anchorBaseDate);
+                if (!bar) return; // 基准日超出已拉取范围，跳过检测
+                const drift = Math.abs(bar.close - row.anchorBaseClose) / row.anchorBaseClose;
+                row.exRights = drift > 0.002;
+            };
             const applySwingDefaults = (row, klines, fallbackHigh, fallbackLow) => {
-                const defaults = core.findMacdSwingDefaults(klines, 30);
+                const defaults = core.findMacdSwingDefaults(klines, 30, { lastBarIncomplete: isLastBarIncomplete(row, klines) });
                 if (isEmptyPrice(row.high) && !row._focusHigh) row.high = (defaults.high || fallbackHigh || 0).toFixed(3);
                 if (isEmptyPrice(row.low) && !row._focusLow) row.low = (defaults.low || fallbackLow || 0).toFixed(3);
+                stampAnchorBase(row, klines);
             };
             const updateAdvice2 = (row, klines) => {
                 if (!klines || klines.length < 21) {
@@ -853,12 +885,22 @@
                     applySwingDefaults(row, klines, options.fallbackHigh, options.fallbackLow);
                     calculateRow(row);
                 }
+                checkExRights(row, klines);
                 updateAdvice2(row, klines);
                 saveToLocal();
             };
             const handleBlur = (row, field) => {
                 row[field] = false;
                 calculateRow(row);
+                // 手动编辑顶/底视为认可当前价格基准，重新打除权检测基准戳
+                if (field === '_focusHigh' || field === '_focusLow') {
+                    fetchKlineData(row.fullCode).then(klines => {
+                        if (klines.length) {
+                            stampAnchorBase(row, klines);
+                            saveToLocal();
+                        }
+                    });
+                }
             };
             const recalcSwing = async (row) => {
                 // 强制重拉K线（绕过缓存），按程序逻辑重算顶/底，覆盖手填值
@@ -868,7 +910,7 @@
                     ElMessage.warning(`${row.name} K线数据不可用，无法重算`);
                     return;
                 }
-                const defaults = core.findMacdSwingDefaults(klines, 30);
+                const defaults = core.findMacdSwingDefaults(klines, 30, { lastBarIncomplete: isLastBarIncomplete(row, klines) });
                 const fallbackHigh = parseFloat(row.dayHigh) || parseFloat(row.now) || 0;
                 const fallbackLow = parseFloat(row.dayLow) || parseFloat(row.now) || 0;
                 const newHigh = defaults.high || fallbackHigh;
@@ -877,6 +919,7 @@
                 // 把新高日期对齐到该高点实际出现的交易日，保证"时间证伪"计数准确
                 const highBar = [...klines].reverse().find(k => Math.abs(k.high - newHigh) < 0.0005);
                 row.highDate = highBar ? highBar.date : '';
+                stampAnchorBase(row, klines);
                 calculateRow(row);
                 updateAdvice2(row, klines);
                 saveToLocal();
