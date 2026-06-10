@@ -85,6 +85,24 @@
         .stock-name-link:hover { color: #409EFF; text-decoration: underline; }
         .kline-chart-box { width: 100%; height: 420px; }
         @media (max-width: 768px) { .kline-chart-box { height: 320px; } }
+        .market-bar { flex-shrink: 0; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 12px; background: #f5f7fa; border-radius: 6px; overflow-x: auto; white-space: nowrap; }
+        .market-bar-item { display: flex; align-items: baseline; gap: 6px; padding: 4px 12px; border-radius: 4px; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
+        .market-bar-item:hover { background: #e8edf3; }
+        .mb-name { font-size: 13px; color: #303133; font-weight: bold; }
+        .mb-price { font-size: 14px; font-weight: 800; font-family: 'Monaco', 'Consolas', monospace; }
+        .mb-pct { font-size: 12px; font-weight: bold; }
+        .market-bar-tip { margin-left: auto; font-size: 11px; color: #c0c4cc; flex-shrink: 0; }
+        .market-note { margin-top: 8px; font-size: 11px; color: #909399; text-align: center; }
+        .group-bar { flex-shrink: 0; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: nowrap; }
+        .group-bar .el-radio-group { flex-wrap: nowrap; overflow-x: auto; flex: 1; }
+        .group-bar .el-button { flex-shrink: 0; }
+        .group-manage-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid #f0f2f5; }
+        .group-manage-name { font-weight: bold; color: #303133; flex: 1; }
+        .group-manage-count { font-size: 12px; color: #909399; }
+        @media (max-width: 768px) {
+            .market-bar { padding: 6px 8px; gap: 4px; }
+            .market-bar-item { padding: 2px 8px; }
+        }
     </style>
 </head>
 <body>
@@ -105,6 +123,40 @@
         <el-dialog v-model="showKlineDialog" :title="klineDialogTitle" :width="isMobile ? '95%' : '780px'" top="6vh" @opened="onKlineDialogOpened" @closed="onKlineDialogClosed">
             <div v-loading="klineLoading">
                 <div ref="klineChartRef" class="kline-chart-box"></div>
+            </div>
+        </el-dialog>
+        <el-dialog v-model="showGroupManager" title="管理分组" :width="isMobile ? '90%' : '420px'">
+            <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+                <el-input v-model="newGroupName" placeholder="输入新分组名称" size="default" maxlength="12" @keyup.enter="addGroup"></el-input>
+                <el-button type="primary" @click="addGroup">新增</el-button>
+            </div>
+            <div v-for="g in groups" :key="g" class="group-manage-row">
+                <span class="group-manage-name">{{g}}</span>
+                <span class="group-manage-count">{{groupCount(g)}} 只</span>
+                <el-button link type="primary" size="small" @click="renameGroup(g)">重命名</el-button>
+                <el-button link type="danger" size="small" @click="deleteGroup(g)">删除</el-button>
+            </div>
+            <div v-if="groups.length === 0" style="text-align: center; color: #909399; font-size: 13px; padding: 10px 0;">
+                暂无分组，先新增一个吧
+            </div>
+        </el-dialog>
+        <el-dialog v-model="showMarketDialog" :width="isMobile ? '95%' : '820px'" top="5vh" @opened="onMarketDialogOpened" @closed="onMarketDialogClosed">
+            <template #header>
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-right: 20px;">
+                    <el-radio-group v-model="marketIndexCode" size="small" @change="loadMarketChart()">
+                        <el-radio-button v-for="idx in indexList" :key="idx.code" :value="idx.code">{{idx.name}}</el-radio-button>
+                    </el-radio-group>
+                    <el-radio-group v-model="marketChartMode" size="small" @change="loadMarketChart()">
+                        <el-radio-button value="minute">分时(黄白线)</el-radio-button>
+                        <el-radio-button value="kline">日K线</el-radio-button>
+                    </el-radio-group>
+                </div>
+            </template>
+            <div v-loading="marketLoading">
+                <div ref="marketChartRef" class="kline-chart-box"></div>
+                <div v-if="marketChartMode === 'minute'" class="market-note">
+                    白线=所选指数走势，黄线=中证1000（小盘股代表）；黄线在上=小票强，白线在上=权重拉指数
+                </div>
             </div>
         </el-dialog>
         <div class="app-container">
@@ -160,12 +212,28 @@
                     <input type="file" ref="fileInput" class="hidden-input" accept=".csv" @change="importData">
                 </div>
             </div>
+            <div class="market-bar">
+                <div v-for="idx in indexList" :key="idx.code" class="market-bar-item" title="点击查看黄白线分时图" @click="showMarketChart(idx.code)">
+                    <span class="mb-name">{{idx.name}}</span>
+                    <span class="mb-price" :style="{ color: getPriceColor(idx.changePct) }">{{idx.now || '--'}}</span>
+                    <span class="mb-pct" :style="{ color: getPriceColor(idx.changePct) }">{{formatPct(idx.changePct)}}</span>
+                </div>
+                <span class="market-bar-tip" v-if="!isMobile">点击指数查看黄白线分时图 📊</span>
+            </div>
             <div class="toolbar">
                 <el-input v-model="inputCodes" type="textarea" :rows="2" placeholder="代码示例：300308,588170,9992" style="flex: 1;"></el-input>
                 <el-button type="primary" @click="addNewCodes" :loading="loading" style="height: 52px; width: 120px;">查询并追加</el-button>
             </div>
+            <div class="group-bar">
+                <el-radio-group v-model="activeGroup" size="small">
+                    <el-radio-button value="__all__">全部 ({{tableData.length}})</el-radio-button>
+                    <el-radio-button v-for="g in groups" :key="g" :value="g">{{g}} ({{groupCount(g)}})</el-radio-button>
+                    <el-radio-button v-if="ungroupedCount > 0 && groups.length > 0" value="__none__">未分组 ({{ungroupedCount}})</el-radio-button>
+                </el-radio-group>
+                <el-button size="small" type="info" plain @click="showGroupManager = true">⚙️ 管理分组</el-button>
+            </div>
             <div class="pc-table-view" style="flex: 1; overflow: hidden; height: 100%;">
-                <el-table ref="tableRef" :data="tableData" border height="100%" :row-class-name="tableRowClassName" row-key="fullCode">
+                <el-table ref="tableRef" :data="filteredTableData" border height="100%" :row-class-name="tableRowClassName" row-key="fullCode">
                     <el-table-column label="名称/代码" min-width="150" fixed="left">
                         <template #default="scope">
                             <div style="display: flex; align-items: center; gap: 8px;">
@@ -246,6 +314,13 @@
                             <div class="green-text">↓ {{scope.row.bottomLine}}</div>
                         </template>
                     </el-table-column>
+                    <el-table-column label="分组" width="115">
+                        <template #default="scope">
+                            <el-select v-model="scope.row.group" size="small" placeholder="未分组" clearable @change="onGroupChange">
+                                <el-option v-for="g in groups" :key="g" :label="g" :value="g"></el-option>
+                            </el-select>
+                        </template>
+                    </el-table-column>
                     <el-table-column label="操作建议" width="135" fixed="right">
                         <template #default="scope">
                             <span class="advice-badge" :class="scope.row.adviceClass">{{scope.row.signal}}</span>
@@ -258,13 +333,13 @@
                     </el-table-column>
                     <el-table-column label="操作" width="60" fixed="right">
                         <template #default="scope">
-                            <el-button type="danger" size="small" link @click="removeItem(scope.$index)">删</el-button>
+                            <el-button type="danger" size="small" link @click="removeItem(scope.row)">删</el-button>
                         </template>
                     </el-table-column>
                 </el-table>
             </div>
             <div id="mobileList" class="mobile-list-container">
-                <div v-for="(item, index) in tableData" :key="item.fullCode" class="m-card" :class="getMobileCardClass(item)">
+                <div v-for="item in filteredTableData" :key="item.fullCode" class="m-card" :class="getMobileCardClass(item)">
                     <div class="m-header">
                         <div class="m-title">
                             <span :class="['market-tag', 'tag-' + getMarket(item.fullCode)]">{{getMarket(item.fullCode).toUpperCase()}}</span>
@@ -272,7 +347,7 @@
                             <span class="m-code">{{item.fullCode}}</span>
                             <span v-if="item.isBreakLow" class="warning-tag">破位</span>
                         </div>
-                        <el-button type="danger" size="small" link @click="removeItem(index)">删除</el-button>
+                        <el-button type="danger" size="small" link @click="removeItem(item)">删除</el-button>
                     </div>
                     <div class="m-price-row">
                         <span class="m-price-val">{{item.now}}</span>
@@ -312,6 +387,12 @@
                             <label>建仓日期</label>
                             <el-date-picker v-model="item.buyDate" type="date" size="small" value-format="YYYY-MM-DD" style="width: 100%" @change="calculateRow(item)"></el-date-picker>
                         </div>
+                        <div class="m-item">
+                            <label>分组</label>
+                            <el-select v-model="item.group" size="small" placeholder="未分组" clearable @change="onGroupChange">
+                                <el-option v-for="g in groups" :key="g" :label="g" :value="g"></el-option>
+                            </el-select>
+                        </div>
                     </div>
                     <div class="m-footer">
                         <div style="font-size: 11px;">
@@ -325,8 +406,8 @@
                         <span class="advice-badge advice2-badge" :class="item.advice2Class">{{item.advice2 || '待计算'}}</span>
                     </div>
                 </div>
-                <div v-if="tableData.length === 0" style="text-align: center; color: #909399; margin-top: 50px;">
-                    暂无数据，请添加代码
+                <div v-if="filteredTableData.length === 0" style="text-align: center; color: #909399; margin-top: 50px;">
+                    {{ tableData.length === 0 ? '暂无数据，请添加代码' : '当前分组暂无股票' }}
                 </div>
             </div>
         </div>
@@ -493,12 +574,14 @@
             parseKlineRows
         };
     })();
-    const { createApp, ref, onMounted, reactive, nextTick, onUnmounted } = Vue;
+    const { createApp, ref, computed, watch, onMounted, reactive, nextTick, onUnmounted } = Vue;
     const { ElMessage, ElMessageBox } = ElementPlus;
     const App = {
         setup() {
             const locale = ElementPlusLocaleZhCn;
             const STORAGE_KEY = 'phi_batch_table_v5';
+            const GROUPS_KEY = 'phi_groups_v1';
+            const ACTIVE_GROUP_KEY = 'phi_active_group_v1';
             const inputCodes = ref("");
             const tableData = ref([]);
             const loading = ref(false);
@@ -562,6 +645,74 @@
                 return (time >= 910 && time <= 1205) || (time >= 1255 && time <= 1605);
             };
             const saveToLocal = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(tableData.value));
+            // ---------- 分组功能 ----------
+            const groups = ref([]);
+            const activeGroup = ref('__all__');
+            const showGroupManager = ref(false);
+            const newGroupName = ref('');
+            const saveGroups = () => localStorage.setItem(GROUPS_KEY, JSON.stringify(groups.value));
+            watch(activeGroup, (val) => localStorage.setItem(ACTIVE_GROUP_KEY, val));
+            const filteredTableData = computed(() => {
+                if (activeGroup.value === '__all__') return tableData.value;
+                if (activeGroup.value === '__none__') return tableData.value.filter(item => !item.group);
+                return tableData.value.filter(item => item.group === activeGroup.value);
+            });
+            const groupCount = (g) => tableData.value.filter(item => item.group === g).length;
+            const ungroupedCount = computed(() => tableData.value.filter(item => !item.group).length);
+            watch(ungroupedCount, (count) => {
+                if (count === 0 && activeGroup.value === '__none__') activeGroup.value = '__all__';
+            });
+            const ensureGroup = (name) => {
+                const n = (name || '').trim();
+                if (n && !groups.value.includes(n)) {
+                    groups.value.push(n);
+                    saveGroups();
+                }
+            };
+            const addGroup = () => {
+                const name = newGroupName.value.trim();
+                if (!name) { ElMessage.warning('请输入分组名称'); return; }
+                if (groups.value.includes(name)) { ElMessage.warning('分组已存在'); return; }
+                groups.value.push(name);
+                saveGroups();
+                newGroupName.value = '';
+                ElMessage.success(`分组「${name}」已创建`);
+            };
+            const renameGroup = (oldName) => {
+                ElMessageBox.prompt('输入新的分组名称', `重命名「${oldName}」`, {
+                    confirmButtonText: '确定', cancelButtonText: '取消', inputValue: oldName,
+                    inputValidator: (val) => {
+                        const v = (val || '').trim();
+                        if (!v) return '名称不能为空';
+                        if (v !== oldName && groups.value.includes(v)) return '该分组名已存在';
+                        return true;
+                    }
+                }).then(({ value }) => {
+                    const newName = value.trim();
+                    if (newName === oldName) return;
+                    const idx = groups.value.indexOf(oldName);
+                    if (idx > -1) groups.value[idx] = newName;
+                    tableData.value.forEach(item => { if (item.group === oldName) item.group = newName; });
+                    if (activeGroup.value === oldName) activeGroup.value = newName;
+                    saveGroups();
+                    saveToLocal();
+                }).catch(() => {});
+            };
+            const deleteGroup = (name) => {
+                const count = groupCount(name);
+                ElMessageBox.confirm(
+                    count > 0 ? `删除分组「${name}」？组内 ${count} 只股票将回到未分组（不会删除股票）` : `删除分组「${name}」？`,
+                    '提示', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+                ).then(() => {
+                    groups.value = groups.value.filter(g => g !== name);
+                    tableData.value.forEach(item => { if (item.group === name) item.group = ''; });
+                    if (activeGroup.value === name) activeGroup.value = '__all__';
+                    saveGroups();
+                    saveToLocal();
+                }).catch(() => {});
+            };
+            const onGroupChange = () => saveToLocal();
+            // ---------- 分组功能 end ----------
             const isEmptyPrice = (value) => {
                 const n = parseFloat(value);
                 return !Number.isFinite(n) || n <= 0;
@@ -697,7 +848,7 @@
                 const option = {
                     animation: false,
                     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-                    legend: { data: ['日K', 'MA5', 'MA20'], top: 0 },
+                    legend: { data: ['日K', 'MA5', 'MA15', 'MA20'], top: 0 },
                     grid: { left: 6, right: 10, top: 30, bottom: 50, containLabel: true },
                     xAxis: { type: 'category', data: dates },
                     yAxis: { scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
@@ -712,6 +863,7 @@
                             markLine: { symbol: 'none', data: fibLines, silent: true }
                         },
                         { name: 'MA5', type: 'line', data: calcMASeries(closes, 5), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#e6a23c' } },
+                        { name: 'MA15', type: 'line', data: calcMASeries(closes, 15), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#cc96f8' } },
                         { name: 'MA20', type: 'line', data: calcMASeries(closes, 20), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#409eff' } }
                     ]
                 };
@@ -746,6 +898,249 @@
                 klineDialogReady = false;
                 pendingKline = null;
             };
+            // ---------- 大盘模块 ----------
+            const indexList = reactive([
+                { code: 'sh000001', name: '上证指数', now: '', changePct: undefined },
+                { code: 'sz399001', name: '深证成指', now: '', changePct: undefined },
+                { code: 'sz399006', name: '创业板指', now: '', changePct: undefined }
+            ]);
+            const SMALL_CAP_CODE = 'sh000852'; // 中证1000，黄线
+            const fetchIndexQuotes = () => {
+                const codes = indexList.map(idx => idx.code);
+                const oldScript = document.getElementById('jsonp-index');
+                if (oldScript) oldScript.remove();
+                const script = document.createElement('script');
+                script.id = 'jsonp-index';
+                script.src = `https://qt.gtimg.cn/q=${codes.join(',')}`;
+                script.onload = () => {
+                    indexList.forEach(idx => {
+                        const dataStr = window[`v_${idx.code}`];
+                        if (!dataStr) return;
+                        const d = dataStr.split('~');
+                        idx.now = parseFloat(d[3]).toFixed(2);
+                        idx.changePct = parseFloat(d[32]) || 0;
+                    });
+                };
+                document.body.appendChild(script);
+            };
+            const showMarketDialog = ref(false);
+            const marketIndexCode = ref('sh000001');
+            const marketChartMode = ref('minute');
+            const marketLoading = ref(false);
+            const marketChartRef = ref(null);
+            let marketChart = null;
+            let marketDialogReady = false;
+            let pendingMarket = null;
+            let marketRefreshTimer = null;
+            const fetchMinuteData = (code) => new Promise((resolve) => {
+                const varName = `min_${code}_${Date.now()}_${Math.floor(Math.random() * 100000)}`.replace(/[^a-zA-Z0-9_]/g, '_');
+                const script = document.createElement('script');
+                const cleanup = () => {
+                    clearTimeout(timer);
+                    script.remove();
+                    try { delete window[varName]; } catch (e) { window[varName] = undefined; }
+                };
+                const fail = () => { cleanup(); resolve(null); };
+                const timer = setTimeout(fail, 8000);
+                script.onerror = fail;
+                script.onload = () => {
+                    const payload = window[varName];
+                    const node = payload && payload.data && payload.data[code];
+                    if (!node || !node.data || !Array.isArray(node.data.data)) { cleanup(); resolve(null); return; }
+                    const points = node.data.data.map(line => {
+                        const parts = String(line).trim().split(/\s+/);
+                        return { time: parts[0], price: parseFloat(parts[1]), volume: parseFloat(parts[2]) || 0 };
+                    }).filter(p => p.time && Number.isFinite(p.price) && p.price > 0);
+                    let prevClose = 0;
+                    const qt = node.qt && node.qt[code];
+                    if (Array.isArray(qt)) prevClose = parseFloat(qt[4]) || 0;
+                    if (!prevClose && points.length) prevClose = points[0].price;
+                    cleanup();
+                    resolve({ points, prevClose, date: node.data.date || '' });
+                };
+                script.src = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?_var=${varName}&code=${code}`;
+                document.body.appendChild(script);
+            });
+            const getIndexName = (code) => {
+                const found = indexList.find(idx => idx.code === code);
+                return found ? found.name : code;
+            };
+            const ensureMarketChart = () => {
+                if (!marketChartRef.value) return false;
+                if (!marketChart || marketChart.isDisposed()) {
+                    marketChart = echarts.init(marketChartRef.value);
+                    window.addEventListener('resize', () => { if (marketChart && !marketChart.isDisposed()) marketChart.resize(); });
+                }
+                return true;
+            };
+            const renderMarketMinute = (main, small, indexName) => {
+                if (!ensureMarketChart()) return;
+                const fmtTime = (t) => `${t.slice(0, 2)}:${t.slice(2, 4)}`;
+                const times = main.points.map(p => fmtTime(p.time));
+                const toPct = (price, base) => base > 0 ? +(((price - base) / base) * 100).toFixed(3) : null;
+                const whitePct = main.points.map(p => toPct(p.price, main.prevClose));
+                const smallMap = {};
+                if (small && small.points) small.points.forEach(p => { smallMap[p.time] = p; });
+                const yellowPct = main.points.map(p => {
+                    const sp = smallMap[p.time];
+                    return (sp && small.prevClose > 0) ? toPct(sp.price, small.prevClose) : null;
+                });
+                // 分钟成交量（接口返回的是累计量，作差得到每分钟量）
+                const volumes = main.points.map((p, i) => {
+                    const prev = i > 0 ? main.points[i - 1].volume : 0;
+                    return Math.max(p.volume - prev, 0);
+                });
+                const volColors = main.points.map((p, i) => {
+                    const prevPrice = i > 0 ? main.points[i - 1].price : main.prevClose;
+                    return p.price >= prevPrice ? '#f56c6c' : '#67c23a';
+                });
+                const whiteName = `${indexName}(白线)`;
+                const yellowName = '中证1000(黄线)';
+                const option = {
+                    animation: false,
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'cross' },
+                        formatter: (params) => {
+                            if (!params || !params.length) return '';
+                            const i = params[0].dataIndex;
+                            const mp = main.points[i];
+                            const sp = smallMap[mp.time];
+                            let html = `<b>${fmtTime(mp.time)}</b><br/>`;
+                            html += `${whiteName}：${mp.price.toFixed(2)}（${whitePct[i] > 0 ? '+' : ''}${whitePct[i]}%）<br/>`;
+                            if (sp && yellowPct[i] !== null) {
+                                html += `${yellowName}：${sp.price.toFixed(2)}（${yellowPct[i] > 0 ? '+' : ''}${yellowPct[i]}%）<br/>`;
+                            }
+                            html += `成交量：${(volumes[i] / 10000).toFixed(1)}万手`;
+                            return html;
+                        }
+                    },
+                    legend: { data: [whiteName, yellowName], top: 0 },
+                    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+                    grid: [
+                        { left: 6, right: 10, top: 30, height: '58%', containLabel: true },
+                        { left: 6, right: 10, top: '76%', height: '18%', containLabel: true }
+                    ],
+                    xAxis: [
+                        { type: 'category', data: times, gridIndex: 0, boundaryGap: false, axisLabel: { interval: 29 } },
+                        { type: 'category', data: times, gridIndex: 1, boundaryGap: false, axisLabel: { show: false }, axisTick: { show: false } }
+                    ],
+                    yAxis: [
+                        {
+                            type: 'value', gridIndex: 0, scale: true,
+                            axisLabel: { formatter: (v) => `${v.toFixed(2)}%` },
+                            splitLine: { lineStyle: { color: '#f0f0f0' } }
+                        },
+                        { type: 'value', gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } }
+                    ],
+                    series: [
+                        {
+                            name: whiteName, type: 'line', data: whitePct, xAxisIndex: 0, yAxisIndex: 0,
+                            showSymbol: false, smooth: false, lineStyle: { width: 1.5, color: '#303133' }, itemStyle: { color: '#303133' },
+                            markLine: {
+                                symbol: 'none', silent: true,
+                                data: [{ yAxis: 0, lineStyle: { color: '#c0c4cc', type: 'dashed', width: 1 }, label: { formatter: '昨收', fontSize: 10 } }]
+                            }
+                        },
+                        {
+                            name: yellowName, type: 'line', data: yellowPct, xAxisIndex: 0, yAxisIndex: 0,
+                            showSymbol: false, smooth: false, lineStyle: { width: 1.5, color: '#e6a23c' }, itemStyle: { color: '#e6a23c' }
+                        },
+                        {
+                            name: '成交量', type: 'bar', data: volumes, xAxisIndex: 1, yAxisIndex: 1,
+                            itemStyle: { color: (p) => volColors[p.dataIndex] }
+                        }
+                    ]
+                };
+                marketChart.setOption(option, true);
+                marketChart.resize();
+            };
+            const renderMarketKline = (klines, indexName) => {
+                if (!ensureMarketChart()) return;
+                const dates = klines.map(k => k.date);
+                const candle = klines.map(k => [k.open, k.close, k.low, k.high]);
+                const closes = klines.map(k => k.close);
+                const option = {
+                    animation: false,
+                    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+                    legend: { data: [indexName, 'MA5', 'MA15', 'MA20'], top: 0 },
+                    grid: { left: 6, right: 10, top: 30, bottom: 50, containLabel: true },
+                    xAxis: { type: 'category', data: dates },
+                    yAxis: { scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+                    dataZoom: [
+                        { type: 'inside', start: 40, end: 100 },
+                        { type: 'slider', start: 40, end: 100, bottom: 6, height: 18 }
+                    ],
+                    series: [
+                        {
+                            name: indexName, type: 'candlestick', data: candle,
+                            itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
+                        },
+                        { name: 'MA5', type: 'line', data: calcMASeries(closes, 5), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#e6a23c' } },
+                        { name: 'MA15', type: 'line', data: calcMASeries(closes, 15), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#cc96f8' } },
+                        { name: 'MA20', type: 'line', data: calcMASeries(closes, 20), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#409eff' } }
+                    ]
+                };
+                marketChart.setOption(option, true);
+                marketChart.resize();
+            };
+            const renderPendingMarket = () => {
+                if (!pendingMarket || !marketDialogReady || !marketChartRef.value) return;
+                if (pendingMarket.type === 'minute') {
+                    renderMarketMinute(pendingMarket.main, pendingMarket.small, pendingMarket.indexName);
+                } else {
+                    renderMarketKline(pendingMarket.klines, pendingMarket.indexName);
+                }
+            };
+            const loadMarketChart = async (silent = false) => {
+                if (!showMarketDialog.value) return;
+                const code = marketIndexCode.value;
+                const mode = marketChartMode.value;
+                const indexName = getIndexName(code);
+                if (!silent) marketLoading.value = true;
+                if (mode === 'minute') {
+                    const [main, small] = await Promise.all([fetchMinuteData(code), fetchMinuteData(SMALL_CAP_CODE)]);
+                    // 异步期间用户可能已切换指数/模式，丢弃过期结果
+                    if (code !== marketIndexCode.value || marketChartMode.value !== 'minute' || !showMarketDialog.value) return;
+                    marketLoading.value = false;
+                    if (!main || !main.points.length) {
+                        if (!silent) ElMessage.warning('分时数据不可用');
+                        return;
+                    }
+                    pendingMarket = { type: 'minute', main, small, indexName };
+                } else {
+                    const klines = await fetchKlineData(code);
+                    if (code !== marketIndexCode.value || marketChartMode.value !== 'kline' || !showMarketDialog.value) return;
+                    marketLoading.value = false;
+                    if (!klines.length) {
+                        if (!silent) ElMessage.warning('K线数据不可用');
+                        return;
+                    }
+                    pendingMarket = { type: 'kline', klines, indexName };
+                }
+                renderPendingMarket();
+            };
+            const showMarketChart = (code) => {
+                marketIndexCode.value = code;
+                showMarketDialog.value = true;
+                loadMarketChart();
+            };
+            const onMarketDialogOpened = () => {
+                marketDialogReady = true;
+                renderPendingMarket();
+                if (marketRefreshTimer) clearInterval(marketRefreshTimer);
+                marketRefreshTimer = setInterval(() => {
+                    if (showMarketDialog.value && marketChartMode.value === 'minute' && isTradingTime()) {
+                        loadMarketChart(true);
+                    }
+                }, 60000);
+            };
+            const onMarketDialogClosed = () => {
+                marketDialogReady = false;
+                pendingMarket = null;
+                if (marketRefreshTimer) { clearInterval(marketRefreshTimer); marketRefreshTimer = null; }
+            };
+            // ---------- 大盘模块 end ----------
             const getMobileCardClass = (row) => {
                 const now = parseFloat(row.now);
                 if (now <= parseFloat(row.f786)) return 'danger-bg';
@@ -850,8 +1245,16 @@
             const onSortEnd = (evt) => {
                 const { oldIndex, newIndex } = evt;
                 if (oldIndex === newIndex) return;
-                const targetRow = tableData.value.splice(oldIndex, 1)[0];
-                tableData.value.splice(newIndex, 0, targetRow);
+                // 表格展示的是过滤后的视图，需要用 fullCode 把位置映射回原始数组
+                const view = filteredTableData.value;
+                const movedRow = view[oldIndex];
+                const targetRow = view[newIndex];
+                if (!movedRow || !targetRow) return;
+                const from = tableData.value.findIndex(item => item.fullCode === movedRow.fullCode);
+                const to = tableData.value.findIndex(item => item.fullCode === targetRow.fullCode);
+                if (from < 0 || to < 0 || from === to) return;
+                const [item] = tableData.value.splice(from, 1);
+                tableData.value.splice(to, 0, item);
                 saveToLocal();
             };
             const formatCode = (code) => {
@@ -920,6 +1323,7 @@
                                     high: '', low: '', buyDate: '', highDate: '',
                                     avg: parseFloat(newAvg.toFixed(3)), signal: '', advice2: '待计算', f382: 0, f618: 0, f786: 0, topLine: 0, bottomLine: 0,
                                     advice2Class: 'advice-normal', klineStatus: '',
+                                    group: (activeGroup.value !== '__all__' && activeGroup.value !== '__none__') ? activeGroup.value : '',
                                     _focusHigh: false, _focusLow: false, _focusCost: false, _focusAvg: false
                                 });
                                 calculateRow(newItem);
@@ -945,14 +1349,18 @@
                 const currentCodes = tableData.value.map(item => item.fullCode);
                 if (currentCodes.length > 0) fetchData(currentCodes, false, isAuto);
             };
-            const removeItem = (index) => {
+            const removeItem = (row) => {
+                const doRemove = () => {
+                    const idx = tableData.value.findIndex(item => item.fullCode === row.fullCode);
+                    if (idx > -1) tableData.value.splice(idx, 1);
+                    saveToLocal();
+                };
                 if(!isMobile.value) {
-                    tableData.value.splice(index, 1);
+                    doRemove();
                 } else {
                     ElMessageBox.confirm('确认删除?', '提示', { confirmButtonText: '删', cancelButtonText: '留', type: 'warning', center: true })
-                    .then(() => tableData.value.splice(index, 1));
+                    .then(doRemove).catch(() => {});
                 }
-                saveToLocal();
             };
             const clearAll = () => {
                 ElMessageBox.confirm('确定清空所有数据吗？', '警告', { confirmButtonText: '清空', cancelButtonText: '取消', type: 'warning' }).then(() => {
@@ -962,9 +1370,9 @@
             };
             const triggerImport = () => fileInput.value.click();
             const exportData = () => {
-                let csv = '\uFEFF代码,名称,最新价,阶段顶部,阶段底部,均价,成本价,建仓日期,新高日期,操作建议2\n';
+                let csv = '\uFEFF代码,名称,最新价,阶段顶部,阶段底部,均价,成本价,建仓日期,新高日期,操作建议2,分组\n';
                 tableData.value.forEach(row => {
-                    csv += `${row.fullCode},${row.name},${row.now},${row.high},${row.low},${row.avg},${row.cost},${row.buyDate||''},${row.highDate||''},${row.advice2||''}\n`;
+                    csv += `${row.fullCode},${row.name},${row.now},${row.high},${row.low},${row.avg},${row.cost},${row.buyDate||''},${row.highDate||''},${row.advice2||''},${row.group||''}\n`;
                 });
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                 const link = document.createElement("a");
@@ -1000,11 +1408,14 @@
                             const code = formatCode(cols[0]);
                             if (!code) return;
                             const safeVal = (val, def = '') => (val === undefined || val === 'null' || val.trim() === '') ? def : val.trim();
+                            const groupName = safeVal(cols[10]);
+                            if (groupName) ensureGroup(groupName);
                             const itemData = {
                                 fullCode: code, name: safeVal(cols[1]), now: safeVal(cols[2], 0),
                                 high: safeVal(cols[3], 0), low: safeVal(cols[4], 0), avg: safeVal(cols[5], 0),
                                 cost: safeVal(cols[6]), buyDate: safeVal(cols[7]), highDate: safeVal(cols[8]),
                                 advice2: safeVal(cols[9], '待计算'), advice2Class: 'advice-normal', klineStatus: '',
+                                group: groupName,
                                 _focusHigh: false, _focusLow: false, _focusCost: false, _focusAvg: false
                             };
                             const idx = tableData.value.findIndex(t => t.fullCode === code);
@@ -1026,6 +1437,10 @@
             };
             onMounted(() => {
                 if (!localStorage.getItem('phi_disclaimer_agreed_v1')) showDisclaimer.value = true;
+                try {
+                    const cachedGroups = JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]');
+                    if (Array.isArray(cachedGroups)) groups.value = cachedGroups.filter(g => typeof g === 'string' && g.trim());
+                } catch(e){}
                 const cached = localStorage.getItem(STORAGE_KEY);
                 if (cached) {
                     try {
@@ -1035,23 +1450,40 @@
                             advice2: item.advice2 || '待计算',
                             advice2Class: item.advice2Class || 'advice-normal',
                             klineStatus: item.klineStatus || '',
+                            group: item.group || '',
                             _focusHigh:false, _focusLow:false, _focusCost:false, _focusAvg:false
                         }));
+                        tableData.value.forEach(item => { if (item.group) ensureGroup(item.group); });
                         sortData();
                         refreshAllPrices();
                     } catch(e){}
                 }
+                const savedActive = localStorage.getItem(ACTIVE_GROUP_KEY);
+                if (savedActive && (savedActive === '__all__' || savedActive === '__none__' || groups.value.includes(savedActive))) {
+                    activeGroup.value = savedActive;
+                }
+                fetchIndexQuotes();
                 nextTick(initSortable);
                 autoRefreshTimer = setInterval(() => {
-                    if (isTradingTime()) refreshAllPrices(true);
+                    if (isTradingTime()) {
+                        refreshAllPrices(true);
+                        fetchIndexQuotes();
+                    }
                 }, 5000);
             });
-            onUnmounted(() => clearInterval(autoRefreshTimer));
+            onUnmounted(() => {
+                clearInterval(autoRefreshTimer);
+                if (marketRefreshTimer) clearInterval(marketRefreshTimer);
+            });
             return {
                 locale, inputCodes, tableData, loading, fileInput, tableRef, showDisclaimer, agreeDisclaimer,
                 addNewCodes, refreshAllPrices, calculateRow, removeItem, clearAll, isMobile, lastRefreshTime,
                 getMarket, triggerImport, exportData, importData, tableRowClassName, getPriceColor, formatPct, handleBlur, getMobileCardClass,
-                showKlineDialog, klineDialogTitle, klineLoading, klineChartRef, showChart, onKlineDialogOpened, onKlineDialogClosed
+                showKlineDialog, klineDialogTitle, klineLoading, klineChartRef, showChart, onKlineDialogOpened, onKlineDialogClosed,
+                groups, activeGroup, showGroupManager, newGroupName, filteredTableData, groupCount, ungroupedCount,
+                addGroup, renameGroup, deleteGroup, onGroupChange,
+                indexList, showMarketDialog, marketIndexCode, marketChartMode, marketLoading, marketChartRef,
+                showMarketChart, loadMarketChart, onMarketDialogOpened, onMarketDialogClosed
             };
         }
     };
