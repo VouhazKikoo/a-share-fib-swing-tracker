@@ -184,9 +184,10 @@
                                 <h4 style="margin: 0 0 8px 0; color: #E6A23C;">📈 二、增强波段默认值</h4>
                                 <ul style="padding-left: 18px; margin: 0 0 15px 0;">
                                     <li><b>默认窗口</b>：最近30个交易日。</li>
-                                    <li><b>阶段底部</b>：优先取MACD金叉前一日低点。</li>
-                                    <li><b>阶段顶部</b>：优先取MACD死叉前一日高点。</li>
+                                    <li><b>阶段底部</b>：用MACD金叉划段，取金叉所终结下跌段的最低点。</li>
+                                    <li><b>阶段顶部</b>：用MACD死叉划段，取死叉所终结上涨段的最高点。</li>
                                     <li><b>兜底</b>：交叉缺失时退回近30日高低点，且不覆盖手动/导入值。</li>
+                                    <li><b>重算按钮</b>：手填错误时可一键按上述逻辑重算顶/底。</li>
                                 </ul>
                                 <h4 style="margin: 0 0 8px 0; color: #67C23A;">🛡️ 二、 持仓模式</h4>
                                 <ul style="padding-left: 18px; margin: 0 0 15px 0;">
@@ -331,8 +332,9 @@
                             <span class="advice-badge advice2-badge" :class="scope.row.advice2Class">{{scope.row.advice2 || '待计算'}}</span>
                         </template>
                     </el-table-column>
-                    <el-table-column label="操作" width="60" fixed="right">
+                    <el-table-column label="操作" width="95" fixed="right">
                         <template #default="scope">
+                            <el-button type="primary" size="small" link title="按MACD波段逻辑重新计算阶段顶部/底部（覆盖手填值）" @click="recalcSwing(scope.row)">重算</el-button>
                             <el-button type="danger" size="small" link @click="removeItem(scope.row)">删</el-button>
                         </template>
                     </el-table-column>
@@ -347,7 +349,10 @@
                             <span class="m-code">{{item.fullCode}}</span>
                             <span v-if="item.isBreakLow" class="warning-tag">破位</span>
                         </div>
-                        <el-button type="danger" size="small" link @click="removeItem(item)">删除</el-button>
+                        <div style="flex-shrink: 0;">
+                            <el-button type="primary" size="small" link @click="recalcSwing(item)">重算顶底</el-button>
+                            <el-button type="danger" size="small" link @click="removeItem(item)">删除</el-button>
+                        </div>
                     </div>
                     <div class="m-price-row">
                         <span class="m-price-val">{{item.now}}</span>
@@ -451,21 +456,63 @@
             const fallbackHigh = Math.max(...recent.map(item => toNumber(item.high)));
             const fallbackLow = Math.min(...recent.map(item => toNumber(item.low)).filter(value => value > 0));
             const start = Math.max(1, klines.length - windowSize);
+            const segmentHigh = (from, to) => {
+                let v = 0;
+                for (let j = Math.max(from, 0); j <= to; j++) v = Math.max(v, toNumber(klines[j].high));
+                return v;
+            };
+            const segmentLow = (from, to) => {
+                let v = Infinity;
+                for (let j = Math.max(from, 0); j <= to; j++) {
+                    const lowVal = toNumber(klines[j].low);
+                    if (lowVal > 0) v = Math.min(v, lowVal);
+                }
+                return Number.isFinite(v) ? v : 0;
+            };
             let high = 0;
             let low = 0;
             let highSource = 'range';
             let lowSource = 'range';
+            // MACD交叉是滞后确认信号，"交叉前一日"经常抓到反弹次高/二次探底而非真实极值，
+            // 因此用交叉划分波段后，取整段行情内的极值作为阶段顶/底
+            let lastGoldenIdx = -1;
+            let lastDeathIdx = -1;
             for (let i = start; i < macdSeries.length; i++) {
                 const prev = macdSeries[i - 1];
                 const curr = macdSeries[i];
                 if (!prev || !curr || !klines[i - 1]) continue;
                 if (prev.diff <= prev.dea && curr.diff > curr.dea) {
-                    low = toNumber(klines[i - 1].low);
-                    lowSource = 'golden-cross-prev-low';
+                    // 金叉：取上一次死叉（或窗口起点）以来这段下跌的最低点
+                    const from = lastDeathIdx > -1 ? lastDeathIdx - 1 : start - 1;
+                    low = segmentLow(from, i - 1);
+                    lowSource = 'down-leg-low';
+                    lastGoldenIdx = i;
                 }
                 if (prev.diff >= prev.dea && curr.diff < curr.dea) {
-                    high = toNumber(klines[i - 1].high);
-                    highSource = 'death-cross-prev-high';
+                    // 死叉：取上一次金叉（或窗口起点）以来这段上涨的最高点
+                    const from = lastGoldenIdx > -1 ? lastGoldenIdx - 1 : start - 1;
+                    high = segmentHigh(from, i - 1);
+                    highSource = 'up-leg-high';
+                    lastDeathIdx = i;
+                }
+            }
+            // 尾段处理：最后一次交叉之后的行情仍在进行中，需双向跟踪极值。
+            // 例如死叉后股价顶背离创新高（MACD未金叉但价格更高），新高也属于最新波段结构
+            const lastIdx = klines.length - 1;
+            const lastCrossIdx = Math.max(lastGoldenIdx, lastDeathIdx);
+            if (lastCrossIdx > -1) {
+                const runningHigh = segmentHigh(lastCrossIdx - 1, lastIdx);
+                if (runningHigh > high) {
+                    high = runningHigh;
+                    highSource = 'running-tail-high';
+                }
+                // 底部只在已有结算值时跟踪新低，避免把刚开始回调的浅坑当成波段底
+                if (low > 0) {
+                    const runningLow = segmentLow(lastCrossIdx - 1, lastIdx);
+                    if (runningLow > 0 && runningLow < low) {
+                        low = runningLow;
+                        lowSource = 'running-tail-low';
+                    }
                 }
             }
             return {
@@ -812,6 +859,28 @@
             const handleBlur = (row, field) => {
                 row[field] = false;
                 calculateRow(row);
+            };
+            const recalcSwing = async (row) => {
+                // 强制重拉K线（绕过缓存），按程序逻辑重算顶/底，覆盖手填值
+                klineCache.delete(row.fullCode);
+                const klines = await fetchKlineData(row.fullCode);
+                if (!klines.length) {
+                    ElMessage.warning(`${row.name} K线数据不可用，无法重算`);
+                    return;
+                }
+                const defaults = core.findMacdSwingDefaults(klines, 30);
+                const fallbackHigh = parseFloat(row.dayHigh) || parseFloat(row.now) || 0;
+                const fallbackLow = parseFloat(row.dayLow) || parseFloat(row.now) || 0;
+                const newHigh = defaults.high || fallbackHigh;
+                row.high = newHigh.toFixed(3);
+                row.low = (defaults.low || fallbackLow).toFixed(3);
+                // 把新高日期对齐到该高点实际出现的交易日，保证"时间证伪"计数准确
+                const highBar = [...klines].reverse().find(k => Math.abs(k.high - newHigh) < 0.0005);
+                row.highDate = highBar ? highBar.date : '';
+                calculateRow(row);
+                updateAdvice2(row, klines);
+                saveToLocal();
+                ElMessage.success(`${row.name} 顶部/底部已按程序逻辑重算`);
             };
             const showKlineDialog = ref(false);
             const klineDialogTitle = ref('');
@@ -1478,7 +1547,7 @@
             return {
                 locale, inputCodes, tableData, loading, fileInput, tableRef, showDisclaimer, agreeDisclaimer,
                 addNewCodes, refreshAllPrices, calculateRow, removeItem, clearAll, isMobile, lastRefreshTime,
-                getMarket, triggerImport, exportData, importData, tableRowClassName, getPriceColor, formatPct, handleBlur, getMobileCardClass,
+                getMarket, triggerImport, exportData, importData, tableRowClassName, getPriceColor, formatPct, handleBlur, getMobileCardClass, recalcSwing,
                 showKlineDialog, klineDialogTitle, klineLoading, klineChartRef, showChart, onKlineDialogOpened, onKlineDialogClosed,
                 groups, activeGroup, showGroupManager, newGroupName, filteredTableData, groupCount, ungroupedCount,
                 addGroup, renameGroup, deleteGroup, onGroupChange,
