@@ -120,7 +120,27 @@
                 </span>
             </template>
         </el-dialog>
-        <el-dialog v-model="showKlineDialog" :title="klineDialogTitle" :width="isMobile ? '95%' : '780px'" top="6vh" @opened="onKlineDialogOpened" @closed="onKlineDialogClosed">
+        <el-dialog v-model="showKlineDialog" :width="isMobile ? '95%' : '860px'" top="6vh" @opened="onKlineDialogOpened" @closed="onKlineDialogClosed">
+            <template #header>
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-right: 20px;">
+                    <span style="font-weight: bold; font-size: 15px; color: #303133;">{{klineDialogTitle}}</span>
+                    <el-radio-group v-model="klinePeriod" size="small" @change="loadStockChart()">
+                        <el-radio-button value="minute">分时</el-radio-button>
+                        <el-radio-button value="m5">5分</el-radio-button>
+                        <el-radio-button value="m15">15分</el-radio-button>
+                        <el-radio-button value="m30">30分</el-radio-button>
+                        <el-radio-button value="m60">60分</el-radio-button>
+                        <el-radio-button value="day">日K</el-radio-button>
+                        <el-radio-button value="week">周K</el-radio-button>
+                        <el-radio-button value="month">月K</el-radio-button>
+                    </el-radio-group>
+                    <el-radio-group v-if="klinePeriod !== 'minute'" v-model="klineIndicator" size="small" @change="renderKlineChart()">
+                        <el-radio-button value="ma">MA</el-radio-button>
+                        <el-radio-button value="boll">BOLL</el-radio-button>
+                        <el-radio-button value="both">MA+BOLL</el-radio-button>
+                    </el-radio-group>
+                </div>
+            </template>
             <div v-loading="klineLoading">
                 <div ref="klineChartRef" class="kline-chart-box"></div>
             </div>
@@ -148,7 +168,18 @@
                     </el-radio-group>
                     <el-radio-group v-model="marketChartMode" size="small" @change="loadMarketChart()">
                         <el-radio-button value="minute">分时(黄白线)</el-radio-button>
-                        <el-radio-button value="kline">日K线</el-radio-button>
+                        <el-radio-button value="m5">5分</el-radio-button>
+                        <el-radio-button value="m15">15分</el-radio-button>
+                        <el-radio-button value="m30">30分</el-radio-button>
+                        <el-radio-button value="m60">60分</el-radio-button>
+                        <el-radio-button value="day">日K</el-radio-button>
+                        <el-radio-button value="week">周K</el-radio-button>
+                        <el-radio-button value="month">月K</el-radio-button>
+                    </el-radio-group>
+                    <el-radio-group v-if="marketChartMode !== 'minute'" v-model="marketIndicator" size="small" @change="renderPendingMarket()">
+                        <el-radio-button value="ma">MA</el-radio-button>
+                        <el-radio-button value="boll">BOLL</el-radio-button>
+                        <el-radio-button value="both">MA+BOLL</el-radio-button>
                     </el-radio-group>
                 </div>
             </template>
@@ -452,6 +483,13 @@
                 macd: (diff[index] - dea[index]) * 2
             }));
         };
+        const calcBOLL = (closes, n = 20, k = 2) => closes.map((_, i) => {
+            if (i < n - 1) return { mid: null, up: null, low: null };
+            const slice = closes.slice(i - n + 1, i + 1);
+            const mid = average(slice);
+            const std = Math.sqrt(slice.reduce((s, v) => s + (v - mid) ** 2, 0) / n);
+            return { mid: +mid.toFixed(3), up: +(mid + k * std).toFixed(3), low: +(mid - k * std).toFixed(3) };
+        });
         const findMacdSwingDefaultsFromSeries = (klines, macdSeries, windowSize = 30, options = {}) => {
             if (!klines.length) return { high: 0, low: 0, highSource: 'none', lowSource: 'none' };
             const recent = klines.slice(-windowSize);
@@ -619,6 +657,7 @@
         return {
             calcEMA,
             calcMACD,
+            calcBOLL,
             findMacdSwingDefaults,
             findMacdSwingDefaultsFromSeries,
             classifyShadow,
@@ -775,13 +814,17 @@
                 const tzOffset = d.getTimezoneOffset() * 60000;
                 return new Date(d.getTime() - tzOffset).toISOString().split('T')[0];
             };
-            const parseKlinePayload = (payload, code) => {
+            const parseKlinePayload = (payload, code, period = 'day') => {
                 const node = payload && payload.data && payload.data[code];
                 if (!node) return [];
-                return core.parseKlineRows(node.qfqday || node.day || []);
+                // 个股前复权数据在 qfqday/qfqweek/qfqmonth 字段，指数及分钟K无复权概念，回退原始字段
+                return core.parseKlineRows(node['qfq' + period] || node[period] || []);
             };
-            const fetchKlineData = (code) => {
-                if (klineCache.has(code)) return Promise.resolve(klineCache.get(code));
+            const fetchKlineData = (code, period = 'day') => {
+                const isMinutePeriod = period.startsWith('m');
+                const cacheKey = `${code}_${period}`;
+                // 分钟K盘中持续生成新K线，缓存会导致切回时看到旧图，不缓存
+                if (!isMinutePeriod && klineCache.has(cacheKey)) return Promise.resolve(klineCache.get(cacheKey));
                 return new Promise((resolve) => {
                     const varName = `kline_${code}_${Date.now()}_${Math.floor(Math.random() * 100000)}`.replace(/[^a-zA-Z0-9_]/g, '_');
                     const script = document.createElement('script');
@@ -799,12 +842,15 @@
                     const timer = setTimeout(fail, 8000);
                     script.onerror = fail;
                     script.onload = () => {
-                        const klines = parseKlinePayload(window[varName], code);
-                        klineCache.set(code, klines);
+                        const klines = parseKlinePayload(window[varName], code, period);
+                        if (!isMinutePeriod) klineCache.set(cacheKey, klines);
                         cleanup();
                         resolve(klines);
                     };
-                    script.src = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${code},day,,,180,qfq`;
+                    // 分钟K接口在 web. 前缀域名下会301到无法解析的主机，必须直连 ifzq.gtimg.cn
+                    script.src = isMinutePeriod
+                        ? `https://ifzq.gtimg.cn/appstock/app/kline/mkline?_var=${varName}&param=${code},${period},,320`
+                        : `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${code},${period},,,180,qfq`;
                     document.body.appendChild(script);
                 });
             };
@@ -904,7 +950,7 @@
             };
             const recalcSwing = async (row) => {
                 // 强制重拉K线（绕过缓存），按程序逻辑重算顶/底，覆盖手填值
-                klineCache.delete(row.fullCode);
+                klineCache.delete(`${row.fullCode}_day`);
                 const klines = await fetchKlineData(row.fullCode);
                 if (!klines.length) {
                     ElMessage.warning(`${row.name} K线数据不可用，无法重算`);
@@ -929,25 +975,163 @@
             const klineDialogTitle = ref('');
             const klineLoading = ref(false);
             const klineChartRef = ref(null);
+            const klinePeriod = ref('day');
+            const klineIndicator = ref('ma');
             let klineChart = null;
             let klineDialogReady = false;
             let pendingKline = null;
+            let currentKlineRow = null;
+            let stockRefreshTimer = null;
+            const PERIOD_LABELS = { m5: '5分K', m15: '15分K', m30: '30分K', m60: '60分K', day: '日K', week: '周K', month: '月K' };
             const calcMASeries = (closes, period) => closes.map((_, i) => {
                 if (i < period - 1) return null;
                 let sum = 0;
                 for (let j = i - period + 1; j <= i; j++) sum += closes[j];
                 return +(sum / period).toFixed(3);
             });
-            const renderKlineChart = () => {
-                if (!pendingKline || !klineDialogReady || !klineChartRef.value) return;
-                const { row, klines } = pendingKline;
+            // 分钟K时间戳形如 202606121030，格式化为 06-12 10:30
+            const formatPeriodDate = (date, period) => {
+                const s = String(date);
+                if (period && period.startsWith('m') && s.length >= 12) {
+                    return `${s.slice(4, 6)}-${s.slice(6, 8)} ${s.slice(8, 10)}:${s.slice(10, 12)}`;
+                }
+                return s;
+            };
+            // 个股与大盘的K线图共用的 option 构建器，按指标开关挂 MA / BOLL 线
+            const buildKlineOption = ({ klines, period, indicator, mainName, fibLines }) => {
+                const dates = klines.map(k => formatPeriodDate(k.date, period));
+                const candle = klines.map(k => [k.open, k.close, k.low, k.high]);
+                const closes = klines.map(k => k.close);
+                const legend = [mainName];
+                const candleSeries = {
+                    name: mainName, type: 'candlestick', data: candle,
+                    itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
+                };
+                if (fibLines && fibLines.length) candleSeries.markLine = { symbol: 'none', data: fibLines, silent: true };
+                const series = [candleSeries];
+                const showMA = indicator !== 'boll';
+                const showBOLL = indicator === 'boll' || indicator === 'both';
+                if (showMA) {
+                    legend.push('MA5', 'MA15', 'MA20');
+                    series.push(
+                        { name: 'MA5', type: 'line', data: calcMASeries(closes, 5), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#e6a23c' } },
+                        { name: 'MA15', type: 'line', data: calcMASeries(closes, 15), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#cc96f8' } },
+                        { name: 'MA20', type: 'line', data: calcMASeries(closes, 20), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#409eff' } }
+                    );
+                }
+                if (showBOLL) {
+                    const boll = core.calcBOLL(closes, 20, 2);
+                    legend.push('BOLL上轨', 'BOLL中轨', 'BOLL下轨');
+                    series.push(
+                        { name: 'BOLL上轨', type: 'line', data: boll.map(b => b.up), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#f5222d', type: 'dashed' } },
+                        { name: 'BOLL中轨', type: 'line', data: boll.map(b => b.mid), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#faad14' } },
+                        { name: 'BOLL下轨', type: 'line', data: boll.map(b => b.low), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#67c23a', type: 'dashed' } }
+                    );
+                }
+                return {
+                    animation: false,
+                    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+                    legend: { data: legend, top: 0 },
+                    grid: { left: 6, right: 10, top: 30, bottom: 50, containLabel: true },
+                    xAxis: { type: 'category', data: dates },
+                    yAxis: { scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+                    dataZoom: [
+                        { type: 'inside', start: 40, end: 100 },
+                        { type: 'slider', start: 40, end: 100, bottom: 6, height: 18 }
+                    ],
+                    series
+                };
+            };
+            const ensureKlineChart = () => {
+                if (!klineChartRef.value) return false;
                 if (!klineChart || klineChart.isDisposed()) {
                     klineChart = echarts.init(klineChartRef.value);
                     window.addEventListener('resize', () => { if (klineChart && !klineChart.isDisposed()) klineChart.resize(); });
                 }
-                const dates = klines.map(k => k.date);
-                const candle = klines.map(k => [k.open, k.close, k.low, k.high]);
-                const closes = klines.map(k => k.close);
+                return true;
+            };
+            // 个股分时图：现价线 + 均价线 + 成交量副图
+            const renderStockMinute = (main, name) => {
+                const fmtTime = (t) => `${t.slice(0, 2)}:${t.slice(2, 4)}`;
+                const times = main.points.map(p => fmtTime(p.time));
+                const prices = main.points.map(p => p.price);
+                // 分钟成交量（接口返回累计量，作差得到每分钟量）
+                const volumes = main.points.map((p, i) => {
+                    const prev = i > 0 ? main.points[i - 1].volume : 0;
+                    return Math.max(p.volume - prev, 0);
+                });
+                // 均价线 ≈ 累计(每分钟收盘价×分钟量)/累计量（接口无逐分钟成交额，用收盘价近似）
+                let cumVol = 0, cumAmt = 0;
+                const avgs = main.points.map((p, i) => {
+                    cumVol += volumes[i];
+                    cumAmt += p.price * volumes[i];
+                    return cumVol > 0 ? +(cumAmt / cumVol).toFixed(3) : +p.price.toFixed(3);
+                });
+                const volColors = main.points.map((p, i) => {
+                    const prevPrice = i > 0 ? main.points[i - 1].price : main.prevClose;
+                    return p.price >= prevPrice ? '#f56c6c' : '#67c23a';
+                });
+                const toPct = (price) => main.prevClose > 0 ? (((price - main.prevClose) / main.prevClose) * 100).toFixed(2) : '0.00';
+                const option = {
+                    animation: false,
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'cross' },
+                        formatter: (params) => {
+                            if (!params || !params.length) return '';
+                            const i = params[0].dataIndex;
+                            const p = main.points[i];
+                            let html = `<b>${fmtTime(p.time)}</b><br/>`;
+                            html += `现价：${p.price.toFixed(3)}（${toPct(p.price) > 0 ? '+' : ''}${toPct(p.price)}%）<br/>`;
+                            html += `均价：${avgs[i]}<br/>`;
+                            html += `成交量：${(volumes[i] / 10000).toFixed(1)}万手`;
+                            return html;
+                        }
+                    },
+                    legend: { data: ['现价', '均价'], top: 0 },
+                    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+                    grid: [
+                        { left: 6, right: 10, top: 30, height: '58%', containLabel: true },
+                        { left: 6, right: 10, top: '76%', height: '18%', containLabel: true }
+                    ],
+                    xAxis: [
+                        { type: 'category', data: times, gridIndex: 0, boundaryGap: false, axisLabel: { interval: 29 } },
+                        { type: 'category', data: times, gridIndex: 1, boundaryGap: false, axisLabel: { show: false }, axisTick: { show: false } }
+                    ],
+                    yAxis: [
+                        { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+                        { type: 'value', gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } }
+                    ],
+                    series: [
+                        {
+                            name: '现价', type: 'line', data: prices, xAxisIndex: 0, yAxisIndex: 0,
+                            showSymbol: false, smooth: false, lineStyle: { width: 1.5, color: '#303133' }, itemStyle: { color: '#303133' },
+                            markLine: {
+                                symbol: 'none', silent: true,
+                                data: [{ yAxis: main.prevClose, lineStyle: { color: '#c0c4cc', type: 'dashed', width: 1 }, label: { formatter: '昨收', fontSize: 10 } }]
+                            }
+                        },
+                        {
+                            name: '均价', type: 'line', data: avgs, xAxisIndex: 0, yAxisIndex: 0,
+                            showSymbol: false, smooth: false, lineStyle: { width: 1.5, color: '#e6a23c' }, itemStyle: { color: '#e6a23c' }
+                        },
+                        {
+                            name: '成交量', type: 'bar', data: volumes, xAxisIndex: 1, yAxisIndex: 1,
+                            itemStyle: { color: (p) => volColors[p.dataIndex] }
+                        }
+                    ]
+                };
+                klineChart.setOption(option, true);
+                klineChart.resize();
+            };
+            const renderKlineChart = () => {
+                if (!pendingKline || !klineDialogReady || !klineChartRef.value) return;
+                if (!ensureKlineChart()) return;
+                if (pendingKline.type === 'minute') {
+                    renderStockMinute(pendingKline.main, pendingKline.row.name);
+                    return;
+                }
+                const { row, klines, period } = pendingKline;
                 const fibLines = [
                     ['常规 0.382', row.f382, '#13c2c2'],
                     ['强防 0.618', row.f618, '#faad14'],
@@ -957,58 +1141,71 @@
                     label: { formatter: `${name}: ${v}`, position: 'insideEndTop', color, fontSize: 10 },
                     lineStyle: { color, type: 'dashed', width: 1 }
                 }));
-                const option = {
-                    animation: false,
-                    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-                    legend: { data: ['日K', 'MA5', 'MA15', 'MA20'], top: 0 },
-                    grid: { left: 6, right: 10, top: 30, bottom: 50, containLabel: true },
-                    xAxis: { type: 'category', data: dates },
-                    yAxis: { scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
-                    dataZoom: [
-                        { type: 'inside', start: 40, end: 100 },
-                        { type: 'slider', start: 40, end: 100, bottom: 6, height: 18 }
-                    ],
-                    series: [
-                        {
-                            name: '日K', type: 'candlestick', data: candle,
-                            itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' },
-                            markLine: { symbol: 'none', data: fibLines, silent: true }
-                        },
-                        { name: 'MA5', type: 'line', data: calcMASeries(closes, 5), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#e6a23c' } },
-                        { name: 'MA15', type: 'line', data: calcMASeries(closes, 15), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#cc96f8' } },
-                        { name: 'MA20', type: 'line', data: calcMASeries(closes, 20), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#409eff' } }
-                    ]
-                };
+                const option = buildKlineOption({
+                    klines, period,
+                    indicator: klineIndicator.value,
+                    mainName: PERIOD_LABELS[period] || '日K',
+                    fibLines
+                });
                 klineChart.setOption(option, true);
                 klineChart.resize();
             };
-            const showChart = async (row) => {
-                klineDialogTitle.value = `${row.name} (${row.fullCode}) 日K线`;
-                showKlineDialog.value = true;
-                klineLoading.value = true;
-                const cached = await fetchKlineData(row.fullCode);
-                const klines = cached.slice();
-                // 若K线序列里还没有当日数据，用实时行情补一根"今日K线"
-                const open = parseFloat(row.open), high = parseFloat(row.dayHigh), low = parseFloat(row.dayLow), close = parseFloat(row.now);
-                if (row.quoteDate && open > 0 && high > 0 && low > 0 && close > 0 && !klines.some(k => k.date === row.quoteDate)) {
-                    klines.push({ date: row.quoteDate, open, close, high, low });
+            const loadStockChart = async (silent = false) => {
+                const row = currentKlineRow;
+                if (!row || !showKlineDialog.value) return;
+                const period = klinePeriod.value;
+                if (!silent) klineLoading.value = true;
+                if (period === 'minute') {
+                    const main = await fetchMinuteData(row.fullCode);
+                    // 异步期间用户可能已切换股票/周期或关闭弹窗，丢弃过期结果
+                    if (row !== currentKlineRow || klinePeriod.value !== 'minute' || !showKlineDialog.value) return;
+                    klineLoading.value = false;
+                    if (!main || !main.points.length) {
+                        if (!silent) ElMessage.warning('分时数据不可用');
+                        return;
+                    }
+                    pendingKline = { type: 'minute', row, main };
+                } else {
+                    const cached = await fetchKlineData(row.fullCode, period);
+                    if (row !== currentKlineRow || klinePeriod.value !== period || !showKlineDialog.value) return;
+                    const klines = cached.slice();
+                    // 日K序列里若还没有当日数据，用实时行情补一根"今日K线"
+                    if (period === 'day') {
+                        const open = parseFloat(row.open), high = parseFloat(row.dayHigh), low = parseFloat(row.dayLow), close = parseFloat(row.now);
+                        if (row.quoteDate && open > 0 && high > 0 && low > 0 && close > 0 && !klines.some(k => k.date === row.quoteDate)) {
+                            klines.push({ date: row.quoteDate, open, close, high, low });
+                        }
+                    }
+                    klineLoading.value = false;
+                    if (!klines.length) {
+                        if (!silent) ElMessage.warning('K线数据不可用');
+                        return;
+                    }
+                    pendingKline = { type: 'kline', row, klines, period };
                 }
-                klineLoading.value = false;
-                if (!klines.length) {
-                    ElMessage.warning('K线数据不可用');
-                    showKlineDialog.value = false;
-                    return;
-                }
-                pendingKline = { row, klines };
                 renderKlineChart();
+            };
+            const showChart = (row) => {
+                currentKlineRow = row;
+                klineDialogTitle.value = `${row.name} (${row.fullCode})`;
+                showKlineDialog.value = true;
+                loadStockChart();
             };
             const onKlineDialogOpened = () => {
                 klineDialogReady = true;
                 renderKlineChart();
+                if (stockRefreshTimer) clearInterval(stockRefreshTimer);
+                stockRefreshTimer = setInterval(() => {
+                    if (showKlineDialog.value && klinePeriod.value === 'minute' && isTradingTime()) {
+                        loadStockChart(true);
+                    }
+                }, 60000);
             };
             const onKlineDialogClosed = () => {
                 klineDialogReady = false;
                 pendingKline = null;
+                currentKlineRow = null;
+                if (stockRefreshTimer) { clearInterval(stockRefreshTimer); stockRefreshTimer = null; }
             };
             // ---------- 大盘模块 ----------
             const indexList = reactive([
@@ -1038,6 +1235,7 @@
             const showMarketDialog = ref(false);
             const marketIndexCode = ref('sh000001');
             const marketChartMode = ref('minute');
+            const marketIndicator = ref('ma');
             const marketLoading = ref(false);
             const marketChartRef = ref(null);
             let marketChart = null;
@@ -1167,32 +1365,13 @@
                 marketChart.setOption(option, true);
                 marketChart.resize();
             };
-            const renderMarketKline = (klines, indexName) => {
+            const renderMarketKline = (klines, indexName, period) => {
                 if (!ensureMarketChart()) return;
-                const dates = klines.map(k => k.date);
-                const candle = klines.map(k => [k.open, k.close, k.low, k.high]);
-                const closes = klines.map(k => k.close);
-                const option = {
-                    animation: false,
-                    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-                    legend: { data: [indexName, 'MA5', 'MA15', 'MA20'], top: 0 },
-                    grid: { left: 6, right: 10, top: 30, bottom: 50, containLabel: true },
-                    xAxis: { type: 'category', data: dates },
-                    yAxis: { scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
-                    dataZoom: [
-                        { type: 'inside', start: 40, end: 100 },
-                        { type: 'slider', start: 40, end: 100, bottom: 6, height: 18 }
-                    ],
-                    series: [
-                        {
-                            name: indexName, type: 'candlestick', data: candle,
-                            itemStyle: { color: '#f56c6c', color0: '#67c23a', borderColor: '#f56c6c', borderColor0: '#67c23a' }
-                        },
-                        { name: 'MA5', type: 'line', data: calcMASeries(closes, 5), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#e6a23c' } },
-                        { name: 'MA15', type: 'line', data: calcMASeries(closes, 15), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#cc96f8' } },
-                        { name: 'MA20', type: 'line', data: calcMASeries(closes, 20), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#409eff' } }
-                    ]
-                };
+                const option = buildKlineOption({
+                    klines, period,
+                    indicator: marketIndicator.value,
+                    mainName: indexName
+                });
                 marketChart.setOption(option, true);
                 marketChart.resize();
             };
@@ -1201,7 +1380,7 @@
                 if (pendingMarket.type === 'minute') {
                     renderMarketMinute(pendingMarket.main, pendingMarket.small, pendingMarket.indexName);
                 } else {
-                    renderMarketKline(pendingMarket.klines, pendingMarket.indexName);
+                    renderMarketKline(pendingMarket.klines, pendingMarket.indexName, pendingMarket.period);
                 }
             };
             const loadMarketChart = async (silent = false) => {
@@ -1221,14 +1400,14 @@
                     }
                     pendingMarket = { type: 'minute', main, small, indexName };
                 } else {
-                    const klines = await fetchKlineData(code);
-                    if (code !== marketIndexCode.value || marketChartMode.value !== 'kline' || !showMarketDialog.value) return;
+                    const klines = await fetchKlineData(code, mode);
+                    if (code !== marketIndexCode.value || marketChartMode.value !== mode || !showMarketDialog.value) return;
                     marketLoading.value = false;
                     if (!klines.length) {
                         if (!silent) ElMessage.warning('K线数据不可用');
                         return;
                     }
-                    pendingMarket = { type: 'kline', klines, indexName };
+                    pendingMarket = { type: 'kline', klines, indexName, period: mode };
                 }
                 renderPendingMarket();
             };
@@ -1586,16 +1765,18 @@
             onUnmounted(() => {
                 clearInterval(autoRefreshTimer);
                 if (marketRefreshTimer) clearInterval(marketRefreshTimer);
+                if (stockRefreshTimer) clearInterval(stockRefreshTimer);
             });
             return {
                 locale, inputCodes, tableData, loading, fileInput, tableRef, showDisclaimer, agreeDisclaimer,
                 addNewCodes, refreshAllPrices, calculateRow, removeItem, clearAll, isMobile, lastRefreshTime,
                 getMarket, triggerImport, exportData, importData, tableRowClassName, getPriceColor, formatPct, handleBlur, getMobileCardClass, recalcSwing,
                 showKlineDialog, klineDialogTitle, klineLoading, klineChartRef, showChart, onKlineDialogOpened, onKlineDialogClosed,
+                klinePeriod, klineIndicator, loadStockChart, renderKlineChart,
                 groups, activeGroup, showGroupManager, newGroupName, filteredTableData, groupCount, ungroupedCount,
                 addGroup, renameGroup, deleteGroup, onGroupChange,
-                indexList, showMarketDialog, marketIndexCode, marketChartMode, marketLoading, marketChartRef,
-                showMarketChart, loadMarketChart, onMarketDialogOpened, onMarketDialogClosed
+                indexList, showMarketDialog, marketIndexCode, marketChartMode, marketIndicator, marketLoading, marketChartRef,
+                showMarketChart, loadMarketChart, onMarketDialogOpened, onMarketDialogClosed, renderPendingMarket
             };
         }
     };
