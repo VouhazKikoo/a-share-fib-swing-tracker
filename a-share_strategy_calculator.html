@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>牛股计算器K线图版</title>
+    <title>策略计算器</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="https://unpkg.com/element-plus@2.6.3/dist/index.css">
     <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.js"></script>
     <script src="https://unpkg.com/element-plus@2.6.3/dist/index.full.min.js"></script>
@@ -120,7 +121,7 @@
     <el-config-provider :locale="locale">
         <el-dialog v-model="showDisclaimer" title="⚠️ 免责声明" :close-on-click-modal="false" :show-close="false" :keyboard="false" width="480px" center>
             <div class="disclaimer-text">
-                <p>1. 本工具（牛股计算器）仅为个人复盘与数据测算辅助工具，所有的计算结果及操作建议均基于特定数学模型自动生成。</p>
+                <p>1. 本工具仅为个人复盘与数据测算辅助工具，所有的计算结果及操作建议均基于特定数学模型自动生成。</p>
                 <p>2. 本工具提供的任何信息均<b>不构成任何实质性的投资建议或买卖指导</b>。金融市场行情瞬息万变，请勿盲目依赖本工具所提示的指标。</p>
                 <p>3. <b>股市有风险，交易需谨慎。</b>任何人据此进行真实的证券投资，所产生的任何盈亏、风险及法律责任均由您<b>完全自行承担</b>。</p>
             </div>
@@ -205,7 +206,7 @@
                 <div>
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <h2>
-                            牛股策略计算器（增强版）
+                            策略计算器
                             <span class="header-sub" v-if="!isMobile">(盘中自动刷新)</span>
                             <span class="header-sub" v-else style="font-size:10px;">{{lastRefreshTime}}</span>
                         </h2>
