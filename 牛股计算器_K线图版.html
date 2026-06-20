@@ -29,14 +29,10 @@
         .tag-hk { background: #f0f9eb; color: #67c23a; border: 1px solid #c2e7b0; }
         .header-color-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
         .warning-tag { padding: 2px 6px; border-radius: 4px; font-size: 11px; background: #f5222d; color: #fff; margin-left: 5px; animation: pulse 2s infinite; }
-        .advice-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; color: #fff; text-align: center; min-width: 80px; }
-        .advice2-badge { min-width: 110px; max-width: 155px; white-space: normal; line-height: 1.3; }
-        .advice-danger { background-color: #f5222d; }
-        .advice-gold { background-color: #faad14; color: #000; }
-        .advice-blue { background-color: #1890ff; }
-        .advice-cyan { background-color: #13c2c2; }
-        .advice-normal { background-color: #bfbfbf; }
-        .advice-warning { background-color: #e6a23c; }
+        .advice-badge { display: inline-flex; align-items: center; justify-content: center; padding: 5px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; text-align: center; min-width: 92px; max-width: 150px; white-space: normal; line-height: 1.25; border: 1px solid transparent; }
+        .advice-positive { color: #1f7a3a; background-color: #eefaf1; border-color: #b7ebc6; }
+        .advice-neutral { color: #606266; background-color: #f4f6f8; border-color: #dcdfe6; }
+        .advice-negative { color: #c92a2a; background-color: #fff1f0; border-color: #ffccc7; }
         .hidden-input { display: none; }
         .drag-handle { cursor: grab; font-size: 18px; color: #909399; padding: 0 4px; transition: color 0.2s; }
         .drag-handle:hover { color: #409EFF; }
@@ -372,7 +368,7 @@
                     </el-table-column>
                     <el-table-column label="形态提示" min-width="155">
                         <template #default="scope">
-                            <span class="advice-badge advice2-badge" :class="scope.row.advice2Class">{{scope.row.advice2 || '待计算'}}</span>
+                            <span class="advice-badge" :class="scope.row.advice2Class">{{scope.row.advice2 || '待计算'}}</span>
                         </template>
                     </el-table-column>
                     <el-table-column label="操作" min-width="85">
@@ -454,7 +450,7 @@
                     </div>
                     <div class="m-advice2">
                         <label>形态</label>
-                        <span class="advice-badge advice2-badge" :class="item.advice2Class">{{item.advice2 || '待计算'}}</span>
+                        <span class="advice-badge" :class="item.advice2Class">{{item.advice2 || '待计算'}}</span>
                     </div>
                 </div>
                 <div v-if="filteredTableData.length === 0" style="text-align: center; color: #909399; margin-top: 50px;">
@@ -635,27 +631,27 @@
         };
         const calculateAdvice2 = ({ yesterday, today, trend }) => {
             if (trend !== 'up' && trend !== 'down') {
-                return { text: '趋势不明，形态仅观察', className: 'advice-normal' };
+                return { text: '趋势不明，形态仅观察', className: 'advice-neutral' };
             }
             const yesterdayShadow = classifyShadow(yesterday);
             const todayShadow = classifyShadow(today);
             const color = getCandleColor(today);
-            if (color === 'flat') return { text: '未形成搓揉线', className: 'advice-normal' };
+            if (color === 'flat') return { text: '未形成搓揉线', className: 'advice-neutral' };
             let sequence = '';
             if (yesterdayShadow === 'lower' && todayShadow === 'upper') sequence = 'lower-upper';
             if (yesterdayShadow === 'upper' && todayShadow === 'lower') sequence = 'upper-lower';
-            if (!sequence) return { text: '未形成搓揉线', className: 'advice-normal' };
+            if (!sequence) return { text: '未形成搓揉线', className: 'advice-neutral' };
             const map = {
-                'down|black|lower-upper': { text: '下跌中继，暂不接', className: 'advice-danger' },
-                'down|red|lower-upper': { text: '支撑震荡，等方向', className: 'advice-warning' },
-                'down|red|upper-lower': { text: '下跌反抽，有资金试盘', className: 'advice-gold' },
-                'down|black|upper-lower': { text: '短线止跌，等确认', className: 'advice-blue' },
-                'up|black|lower-upper': { text: '上涨分歧，注意回落', className: 'advice-warning' },
-                'up|red|lower-upper': { text: '强势分歧，继续看高', className: 'advice-cyan' },
-                'up|red|upper-lower': { text: '承接尚可，不追高', className: 'advice-blue' },
-                'up|black|upper-lower': { text: '承接转弱，防短顶', className: 'advice-danger' }
+                'down|black|lower-upper': { text: '下跌中继，暂不接', className: 'advice-negative' },
+                'down|red|lower-upper': { text: '支撑震荡，等方向', className: 'advice-neutral' },
+                'down|red|upper-lower': { text: '下跌反抽，有资金试盘', className: 'advice-positive' },
+                'down|black|upper-lower': { text: '短线止跌，等确认', className: 'advice-neutral' },
+                'up|black|lower-upper': { text: '上涨分歧，注意回落', className: 'advice-negative' },
+                'up|red|lower-upper': { text: '强势分歧，继续看高', className: 'advice-positive' },
+                'up|red|upper-lower': { text: '承接尚可，不追高', className: 'advice-positive' },
+                'up|black|upper-lower': { text: '承接转弱，防短顶', className: 'advice-negative' }
             };
-            return map[`${trend}|${color}|${sequence}`] || { text: '未形成搓揉线', className: 'advice-normal' };
+            return map[`${trend}|${color}|${sequence}`] || { text: '未形成搓揉线', className: 'advice-neutral' };
         };
         const parseKlineRows = (rows) => {
             if (!Array.isArray(rows)) return [];
@@ -719,6 +715,12 @@
                 if (p > 0) return `↑${p.toFixed(2)}%`;
                 if (p < 0) return `↓${Math.abs(p).toFixed(2)}%`;
                 return `0.00%`;
+            };
+            const normalizeAdviceClass = (className) => {
+                if (className === 'advice-positive' || className === 'advice-neutral' || className === 'advice-negative') return className;
+                if (className === 'advice-danger' || className === 'advice-warning') return 'advice-negative';
+                if (className === 'advice-gold' || className === 'advice-blue' || className === 'advice-cyan') return 'advice-positive';
+                return 'advice-neutral';
             };
             const getPriceColor = (pct) => {
                 const p = parseFloat(pct);
@@ -900,7 +902,7 @@
             const updateAdvice2 = (row, klines) => {
                 if (!klines || klines.length < 21) {
                     row.advice2 = '数据不足';
-                    row.advice2Class = 'advice-normal';
+                    row.advice2Class = 'advice-neutral';
                     row.klineStatus = '数据不足';
                     return;
                 }
@@ -915,7 +917,7 @@
                 const close = parseFloat(row.now);
                 if (!yesterday || !open || !high || !low || !close) {
                     row.advice2 = '数据不足';
-                    row.advice2Class = 'advice-normal';
+                    row.advice2Class = 'advice-neutral';
                     row.klineStatus = '数据不足';
                     return;
                 }
@@ -930,7 +932,7 @@
                 const klines = await fetchKlineData(row.fullCode);
                 if (!klines.length) {
                     row.advice2 = 'K线不可用';
-                    row.advice2Class = 'advice-normal';
+                    row.advice2Class = 'advice-neutral';
                     row.klineStatus = 'K线不可用';
                     if (options.applyDefaults) {
                         if (isEmptyPrice(row.high)) row.high = (options.fallbackHigh || 0).toFixed(3);
@@ -1499,15 +1501,15 @@
                     const holdDays = getHoldDays(row.buyDate);
                     const daysSinceHigh = row.highDate ? getHoldDays(row.highDate) : holdDays;
                     if (low > 0 && now < low * 0.97) {
-                        row.signal = '跌破波段底，止损'; row.adviceClass = 'advice-danger';
+                        row.signal = '跌破波段底，止损'; row.adviceClass = 'advice-negative';
                     } else if (now <= cost * 0.94) {
-                        row.signal = '亏损超6%，止损'; row.adviceClass = 'advice-danger';
+                        row.signal = '亏损超6%，止损'; row.adviceClass = 'advice-negative';
                     } else if (daysSinceHigh >= 13 && high > 0 && !row._isNewHigh) {
-                        row.signal = '13天未新高，减仓'; row.adviceClass = 'advice-warning';
+                        row.signal = '13天未新高，减仓'; row.adviceClass = 'advice-negative';
                     } else if (row._isNewHigh || (now === high && high > 0)) {
-                        row.signal = '突破新高，继续跟踪'; row.adviceClass = 'advice-gold';
+                        row.signal = '突破新高，继续跟踪'; row.adviceClass = 'advice-positive';
                     } else {
-                        row.signal = `持仓中，第${holdDays}天`; row.adviceClass = 'advice-blue';
+                        row.signal = `持仓中，第${holdDays}天`; row.adviceClass = 'advice-positive';
                     }
                 } else {
                     const f382_val = parseFloat(row.f382);
@@ -1515,23 +1517,23 @@
                     const f786_val = parseFloat(row.f786);
                     const f500_val = high - diff * 0.5;
                     if (low > 0 && now < low) {
-                        row.isBreakLow = true; row.signal = '跌破波段底，暂不看'; row.adviceClass = 'advice-danger';
+                        row.isBreakLow = true; row.signal = '跌破波段底，暂不看'; row.adviceClass = 'advice-negative';
                     } else if (row._isNewHigh) {
-                        row.signal = '突破新高，等回踩'; row.adviceClass = 'advice-danger';
+                        row.signal = '突破新高，等回踩'; row.adviceClass = 'advice-neutral';
                     } else if (low > 0) {
                         if (now < f786_val) {
-                            row.signal = '跌破0.786，放弃观察'; row.adviceClass = 'advice-normal';
+                            row.signal = '跌破0.786，放弃观察'; row.adviceClass = 'advice-negative';
                         } else if (now < f618_val * 0.99) {
-                            row.signal = '跌破0.618，走势转弱'; row.adviceClass = 'advice-warning';
+                            row.signal = '跌破0.618，走势转弱'; row.adviceClass = 'advice-negative';
                         } else if (now <= f500_val * 1.02) {
-                            row.signal = '靠近0.618，观察承接'; row.adviceClass = 'advice-blue';
+                            row.signal = '靠近0.618，观察承接'; row.adviceClass = 'advice-positive';
                         } else if (now <= f382_val * 1.03) {
-                            row.signal = '靠近0.382，观察回踩'; row.adviceClass = 'advice-cyan';
+                            row.signal = '靠近0.382，观察回踩'; row.adviceClass = 'advice-positive';
                         } else {
-                            row.signal = '位置偏高，先观望'; row.adviceClass = 'advice-normal';
+                            row.signal = '位置偏高，先观望'; row.adviceClass = 'advice-neutral';
                         }
                     } else {
-                        row.signal = '缺少波段底，先观望'; row.adviceClass = 'advice-normal';
+                        row.signal = '缺少波段底，先观望'; row.adviceClass = 'advice-neutral';
                     }
                 }
                 saveToLocal();
@@ -1626,7 +1628,7 @@
                                     open: dayOpen, dayHigh: dayHigh, dayLow: dayLow, quoteDate: quoteDate,
                                     high: '', low: '', buyDate: '', highDate: '',
                                     avg: parseFloat(newAvg.toFixed(3)), signal: '', advice2: '待计算', f382: 0, f618: 0, f786: 0, topLine: 0, bottomLine: 0,
-                                    advice2Class: 'advice-normal', klineStatus: '',
+                                    advice2Class: 'advice-neutral', klineStatus: '',
                                     group: (activeGroup.value !== '__all__' && activeGroup.value !== '__none__') ? activeGroup.value : '',
                                     _focusHigh: false, _focusLow: false, _focusCost: false, _focusAvg: false
                                 });
@@ -1718,7 +1720,7 @@
                                 fullCode: code, name: safeVal(cols[1]), now: safeVal(cols[2], 0),
                                 high: safeVal(cols[3], 0), low: safeVal(cols[4], 0), avg: safeVal(cols[5], 0),
                                 cost: safeVal(cols[6]), buyDate: safeVal(cols[7]), highDate: safeVal(cols[8]),
-                                advice2: safeVal(cols[9], '待计算'), advice2Class: 'advice-normal', klineStatus: '',
+                                advice2: safeVal(cols[9], '待计算'), advice2Class: 'advice-neutral', klineStatus: '',
                                 group: groupName,
                                 _focusHigh: false, _focusLow: false, _focusCost: false, _focusAvg: false
                             };
@@ -1752,7 +1754,7 @@
                         tableData.value = parsed.map(item => reactive({
                             ...item,
                             advice2: item.advice2 || '待计算',
-                            advice2Class: item.advice2Class || 'advice-normal',
+                            advice2Class: normalizeAdviceClass(item.advice2Class || 'advice-neutral'),
                             klineStatus: item.klineStatus || '',
                             group: item.group || '',
                             _focusHigh:false, _focusLow:false, _focusCost:false, _focusAvg:false
